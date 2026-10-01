@@ -2,6 +2,7 @@ import asyncio
 import logging
 import datetime
 import time
+import socket
 from typing import Callable, Dict, Any, Awaitable
 import aiohttp
 from aiogram import Bot, Dispatcher, F, BaseMiddleware
@@ -9,12 +10,16 @@ from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.client.session.aiohttp import AiohttpSession
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8644433769:AAGP4VjXPU-_Kpx6VtZaPzhHu8dkYTYKAtc"
 PUB_ID = "35ddcc86-1bc0-4f83-ae44-ad3abbeaf4ca"
 
-bot = Bot(token=BOT_TOKEN)
+# ЖЁСТКО ЗАДАЕМ IPv4 (чтобы хостинг не отваливался по тайм-ауту при связи с Telegram)
+session = AiohttpSession(connector=aiohttp.TCPConnector(family=socket.AF_INET))
+bot = Bot(token=BOT_TOKEN, session=session)
+
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
@@ -120,8 +125,10 @@ async def fetch_schedule_json(entity_id: int, role: str, target_weekday: int) ->
         payload = {"publicationId": PUB_ID, "teacherId": str(entity_id), "date": target_date_str}
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers, ssl=False) as response:
+        # Здесь тоже принудительно используем IPv4 для надежности
+        connector = aiohttp.TCPConnector(family=socket.AF_INET)
+        async with aiohttp.ClientSession(connector=connector) as api_session:
+            async with api_session.post(url, json=payload, headers=headers, ssl=False) as response:
                 if response.status == 200:
                     return await response.json()
     except Exception as e:
