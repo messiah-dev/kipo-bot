@@ -15,11 +15,14 @@ from aiogram.fsm.state import StatesGroup, State
 BOT_TOKEN = "8644433769:AAGP4VjXPU-_Kpx6VtZaPzhHu8dkYTYKAtc"
 PUB_ID = "35ddcc86-1bc0-4f83-ae44-ad3abbeaf4ca"
 
+# СЮДА ВСТАВЬ ССЫЛКУ НА ФОТКУ КИПО (URL должен заканчиваться на .jpg или .png)
+PHOTO_URL = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcS_P6FpSZIVbH1i0zSlfke0Kko0YfEtTrtIaUJgn-wY6Q&s=10" 
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# --- АНТИФЛУД МИДЛВАРЬ (не более 3 запросов за 30 секунд) ---
+# --- АНТИФЛУД МИДЛВАРЬ (не более 5 запросов за 30 секунд) ---
 user_timestamps: Dict[int, list] = {}
 
 class ThrottlingMiddleware(BaseMiddleware):
@@ -38,9 +41,11 @@ class ThrottlingMiddleware(BaseMiddleware):
         if user_id not in user_timestamps:
             user_timestamps[user_id] = []
             
+        # Очищаем старые запросы
         user_timestamps[user_id] = [t for t in user_timestamps[user_id] if current_time - t < 30]
         
-        if len(user_timestamps[user_id]) >= 3:
+        # ЛИМИТ: 5 запросов
+        if len(user_timestamps[user_id]) >= 5:
             await event.answer("⚠️ Слишком часто! Подождите 30 секунд перед отправкой следующей команды.")
             return
             
@@ -80,7 +85,7 @@ DAYS_MAPPING = {
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="👨‍🎓 Я студент")],
+            [KeyboardButton(text="👨‍‍🎓 Я студент")],
             [KeyboardButton(text="👨‍🏫 Я преподаватель")]
         ],
         resize_keyboard=True,
@@ -121,7 +126,6 @@ async def fetch_schedule_json(entity_id: int, role: str, target_weekday: int) ->
         payload = {"publicationId": PUB_ID, "teacherId": str(entity_id), "date": target_date_str}
     
     try:
-        # IPv4 фикс тут работает нормально, так как он внутри асинхронной функции
         connector = aiohttp.TCPConnector(family=socket.AF_INET)
         async with aiohttp.ClientSession(connector=connector) as api_session:
             async with api_session.post(url, json=payload, headers=headers, ssl=False) as response:
@@ -172,11 +176,28 @@ def format_day_schedule(lessons_data: list, target_weekday: int, day_name: str, 
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "👋 Привет! Я твой карманный помощник по расписанию КИПО.\n\n"
-        "Выбери свою роль в меню ниже:",
-        reply_markup=get_main_keyboard()
+    
+    # Получаем имя пользователя из Телеграма (если скрыто, ставим "студент")
+    user_name = message.from_user.first_name or "студент"
+    
+    text = (
+        f"👋 Привет, {user_name}! Ты попал в бота - расписание КИПО.\n\n"
+        "Выбери на кнопку ниже кто ты:"
     )
+    
+    try:
+        # Пробуем отправить сообщение с картинкой
+        await message.answer_photo(
+            photo=PHOTO_URL,
+            caption=text,
+            reply_markup=get_main_keyboard()
+        )
+    except Exception:
+        # Если ссылка на картинку битая, отправляем просто текст
+        await message.answer(
+            text,
+            reply_markup=get_main_keyboard()
+        )
 
 # --- ВЕТКА ПРЕПОДАВАТЕЛЕЙ ---
 @dp.message(F.text == "👨‍🏫 Я преподаватель")
@@ -193,7 +214,8 @@ async def fetch_teacher_name_step(message: Message, state: FSMContext):
     
     if query == "🔙 назад":
         await state.clear()
-        await message.answer("Главное меню:", reply_markup=get_main_keyboard())
+        # Вызываем стартовую функцию напрямую, чтобы при возврате тоже была фотка (опционально)
+        await cmd_start(message, state)
         return
 
     teacher_id = None
@@ -217,7 +239,7 @@ async def fetch_teacher_name_step(message: Message, state: FSMContext):
 @dp.message(F.text == "👨‍🎓 Я студент")
 async def process_student_role(message: Message, state: FSMContext):
     await message.answer(
-        "Напиши номер своей группы (например, 25-ЗУ-11):",
+        "Напиши номер своей группы (Пример: 26-РИС1-9 или 25-ЗУ-11):",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔙 Назад")]], resize_keyboard=True)
     )
     await state.set_state(ScheduleForm.waiting_for_student_group)
@@ -228,7 +250,7 @@ async def fetch_student_group_step(message: Message, state: FSMContext):
     
     if query == "🔙 назад":
         await state.clear()
-        await message.answer("Главное меню:", reply_markup=get_main_keyboard())
+        await cmd_start(message, state)
         return
 
     group_id = None
@@ -255,7 +277,7 @@ async def fetch_schedule_by_day(message: Message, state: FSMContext):
     
     if day_text == "🔙 назад":
         await state.clear()
-        await message.answer("Главное меню:", reply_markup=get_main_keyboard())
+        await cmd_start(message, state)
         return
         
     if day_text not in DAYS_MAPPING:
